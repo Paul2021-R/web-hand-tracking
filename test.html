@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>손 제스처 카운터 (개선된 스켈레톤)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        #input_video {
+            transform: scaleX(-1);
+            display: none;
+        }
+        #output_canvas {
+            transform: scaleX(-1);
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+        }
+        #counter {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 24px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <select id="handSelect">
+            <option value="left">왼손</option>
+            <option value="right">오른손</option>
+        </select>
+    </div>
+    <div id="counter">카운트: 0</div>
+    <video id="input_video"></video>
+    <canvas id="output_canvas"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const handSelect = document.getElementById('handSelect');
+        const counterElement = document.getElementById('counter');
+
+        let selectedHand = 'left';
+        let count = 0;
+        let lastGesture = null;
+
+        handSelect.addEventListener('change', (event) => {
+            selectedHand = event.target.value;
+            count = 0;
+            counterElement.textContent = `카운트: ${count}`;
+        });
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const classification = results.multiHandedness[i];
+                    const isRightHand = classification.label === 'Left'; // 카메라 반전으로 인해 'Left'가 실제 오른손입니다.
+                    if ((selectedHand === 'right' && isRightHand) || (selectedHand === 'left' && !isRightHand)) {
+                        const landmarks = results.multiHandLandmarks[i];
+                        drawCustomConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                        drawCustomLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1});
+                        
+                        const gesture = detectGesture(landmarks);
+                        if (gesture === 'closed' && lastGesture === 'open') {
+                            count++;
+                            counterElement.textContent = `카운트: ${count}`;
+                        }
+                        lastGesture = gesture;
+                    }
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        function drawCustomConnectors(ctx, landmarks, connections, style) {
+            const canvas = ctx.canvas;
+            for (const connection of connections) {
+                const from = landmarks[connection[0]];
+                const to = landmarks[connection[1]];
+                if (from && to) {
+                    ctx.beginPath();
+                    ctx.moveTo(from.x * canvas.width, from.y * canvas.height);
+                    ctx.lineTo(to.x * canvas.width, to.y * canvas.height);
+                    ctx.strokeStyle = style.color;
+                    ctx.lineWidth = style.lineWidth;
+                    ctx.stroke();
+                }
+            }
+        }
+
+        function drawCustomLandmarks(ctx, landmarks, style) {
+            const canvas = ctx.canvas;
+            for (const landmark of landmarks) {
+                const x = landmark.x * canvas.width;
+                const y = landmark.y * canvas.height;
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fillStyle = style.color;
+                ctx.fill();
+            }
+        }
+
+        function detectGesture(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const ringTip = landmarks[14];
+            const pinkyTip = landmarks[20];
+            const wrist = landmarks[0];
+
+            const fingersExtended = [
+                thumbTip.y < landmarks[3].y, // 엄지손가락
+                indexTip.y < landmarks[6].y,
+                middleTip.y < landmarks[10].y,
+                ringTip.y < landmarks[14].y,
+                pinkyTip.y < landmarks[18].y
+            ];
+
+            const extendedCount = fingersExtended.filter(Boolean).length;
+
+            return extendedCount >= 4 ? 'open' : 'closed';
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+
+        camera.start();
+    </script>
+</body>
+</html>
